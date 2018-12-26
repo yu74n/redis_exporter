@@ -138,6 +138,15 @@ var (
 		// # Cluster
 		"cluster_stats_messages_sent":     "cluster_messages_sent_total",
 		"cluster_stats_messages_received": "cluster_messages_received_total",
+
+		// # Defrag
+		"allocator_frag_ratio":     "allocator_frag_ratio",
+		"allocator_frag_bytes":     "allocator_frag_bytes",
+		"active_defrag_running":    "active_defrag_running",
+		"active_defrag_hits":       "active_defrag_hits",
+		"active_defrag_misses":     "active_defrag_misses",
+		"active_defrag_key_hits":   "active_defrag_key_hits",
+		"active_defrag_key_misses": "active_defrag_key_misses",
 	}
 
 	instanceInfoFields = map[string]bool{"role": true, "redis_version": true, "redis_build_id": true, "redis_mode": true, "os": true}
@@ -650,6 +659,17 @@ func (e *Exporter) extractInfoMetrics(info, addr string, alias string, scrapes c
 	return nil
 }
 
+func (e *Exporter) extractMemoryStats(info []interface{}, addr string, alias string, scrapes chan<- scrapeResult) {
+	for i := 1; i < len(info)-1; i += 2 {
+		key, _ := redis.String(info[i-1], nil)
+		metricName := prom_strutil.SanitizeLabelName(key)
+
+		val, _ := redis.Float64(info[i], nil)
+		log.Debugf("%s: %s", metricName, info[i])
+		scrapes <- scrapeResult{Name: metricName, Addr: addr, Alias: alias, Value: val}
+	}
+}
+
 func doRedisCmd(c redis.Conn, cmd string, args ...interface{}) (reply interface{}, err error) {
 	log.Debugf("c.Do() - running command: %s %s", cmd, args)
 	defer log.Debugf("c.Do() - done")
@@ -822,6 +842,14 @@ func (e *Exporter) scrapeRedisHost(scrapes chan<- scrapeResult, addr string, idx
 	}
 
 	e.extractInfoMetrics(infoAll, addr, e.redis.Aliases[idx], scrapes, dbCount, true)
+
+	memoryStatsInfo, err := redis.Values(doRedisCmd(c, "MEMORY", "STATS"))
+	if err != nil {
+		log.Errorf("Redis MEMORY STATS err: %s", err)
+		return err
+	}
+
+	e.extractMemoryStats(memoryStatsInfo, addr, e.redis.Aliases[idx], scrapes)
 
 	if reply, err := doRedisCmd(c, "LATENCY", "LATEST"); err == nil {
 		var eventName string
