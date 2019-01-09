@@ -1354,6 +1354,14 @@ func TestClusterSlave(t *testing.T) {
 	}
 }
 
+func TestParseVersion(t *testing.T) {
+	e, _ := NewRedisExporter(defaultRedisHost, "test", "", "")
+	v := e.parseVersion("1.2.3")
+	if v.Major != 1 || v.Minor != 2 || v.Build != 3 {
+		t.Errorf("Version parsing failed (%i.%i.%i)\n", v.Major, v.Minor, v.Build)
+	}
+}
+
 func init() {
 	ll := strings.ToLower(os.Getenv("LOG_LEVEL"))
 	if pl, err := log.ParseLevel(ll); err == nil {

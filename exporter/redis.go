@@ -21,6 +21,7 @@ type RedisHost struct {
 	Addrs     []string
 	Passwords []string
 	Aliases   []string
+	Versions  []string
 }
 
 type dbKeyPair struct {
@@ -57,6 +58,12 @@ type scrapeResult struct {
 	Addr  string
 	Alias string
 	DB    string
+}
+
+type Version struct {
+	Major int
+	Minor int
+	Build int
 }
 
 var (
@@ -151,6 +158,7 @@ var (
 
 	instanceInfoFields = map[string]bool{"role": true, "redis_version": true, "redis_build_id": true, "redis_mode": true, "os": true}
 	slaveInfoFields    = map[string]bool{"master_host": true, "master_port": true, "slave_read_only": true}
+	versionRegex       = regexp.MustCompile(`[0-9]\.`)
 )
 
 func (e *Exporter) initGauges() {
@@ -481,7 +489,8 @@ func extractConfigMetrics(config []string, addr string, alias string, scrapes ch
 	return
 }
 
-func (e *Exporter) extractInfoMetrics(info, addr string, alias string, scrapes chan<- scrapeResult, dbCount int, padDBKeyCounts bool) error {
+func (e *Exporter) extractInfoMetrics(info, addr string, idx int, scrapes chan<- scrapeResult, dbCount int, padDBKeyCounts bool) error {
+	alias := e.redis.Aliases[idx]
 	cmdstats := false
 	lines := strings.Split(info, "\r\n")
 
@@ -636,6 +645,8 @@ func (e *Exporter) extractInfoMetrics(info, addr string, alias string, scrapes c
 			}
 		}
 	}
+
+	e.redis.Versions[idx] = instanceInfo["redis_version"]
 
 	e.metricsMtx.RLock()
 	e.metrics["instance_info"].WithLabelValues(
@@ -826,7 +837,7 @@ func (e *Exporter) scrapeRedisHost(scrapes chan<- scrapeResult, addr string, idx
 
 	if isClusterEnabled {
 		if clusterInfo, err := redis.String(doRedisCmd(c, "CLUSTER", "INFO")); err == nil {
-			e.extractInfoMetrics(clusterInfo, addr, e.redis.Aliases[idx], scrapes, dbCount, false)
+			e.extractInfoMetrics(clusterInfo, addr, idx, scrapes, dbCount, false)
 
 			// in cluster mode Redis only supports one database so no extra padding beyond that needed
 			dbCount = 1
@@ -841,7 +852,7 @@ func (e *Exporter) scrapeRedisHost(scrapes chan<- scrapeResult, addr string, idx
 		}
 	}
 
-	e.extractInfoMetrics(infoAll, addr, e.redis.Aliases[idx], scrapes, dbCount, true)
+	e.extractInfoMetrics(infoAll, addr, idx, scrapes, dbCount, true)
 
 	memoryStatsInfo, err := redis.Values(doRedisCmd(c, "MEMORY", "STATS"))
 	if err != nil {
@@ -984,4 +995,23 @@ func (e *Exporter) collectMetrics(metrics chan<- prometheus.Metric) {
 	for _, m := range e.metrics {
 		m.Collect(metrics)
 	}
+}
+
+func (e *Exporter) parseVersion(version string) Version {
+	matched := versionRegex.FindAllString(version, 3)
+	var major, minor, build int
+	var err error
+	if major, err = strconv.Atoi(matched[0]); err != nil {
+		log.Warnf("Major version number is not numeric %s", matched[0])
+		major = 0
+	}
+	if minor, err = strconv.Atoi(matched[1]); err != nil {
+		log.Warnf("Minor version number is not numeric %s", matched[1])
+		minor = 0
+	}
+	if build, err = strconv.Atoi(matched[2]); err != nil {
+		log.Warnf("Major version number is not numeric %s", matched[2])
+		build = 0
+	}
+	return Version{Major: major, Minor: minor, Build: build}
 }
