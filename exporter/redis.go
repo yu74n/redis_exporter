@@ -158,7 +158,6 @@ var (
 
 	instanceInfoFields = map[string]bool{"role": true, "redis_version": true, "redis_build_id": true, "redis_mode": true, "os": true}
 	slaveInfoFields    = map[string]bool{"master_host": true, "master_port": true, "slave_read_only": true}
-	versionRegex       = regexp.MustCompile(`[0-9]\.`)
 )
 
 func (e *Exporter) initGauges() {
@@ -272,7 +271,7 @@ func parseKeyArg(keysArgString string) (keys []dbKeyPair, err error) {
 // NewRedisExporter returns a new exporter of Redis metrics.
 // note to self: next time we add an argument, instead add a RedisExporter struct
 func NewRedisExporter(host RedisHost, namespace, checkSingleKeys, checkKeys string) (*Exporter, error) {
-
+	host.Versions = make([]string, len(host.Addrs))
 	e := Exporter{
 		redis:     host,
 		namespace: namespace,
@@ -853,14 +852,15 @@ func (e *Exporter) scrapeRedisHost(scrapes chan<- scrapeResult, addr string, idx
 	}
 
 	e.extractInfoMetrics(infoAll, addr, idx, scrapes, dbCount, true)
-
-	memoryStatsInfo, err := redis.Values(doRedisCmd(c, "MEMORY", "STATS"))
-	if err != nil {
-		log.Errorf("Redis MEMORY STATS err: %s", err)
-		return err
+	version := e.parseVersion(e.redis.Versions[idx])
+	if version.Major >= 4 {
+		memoryStatsInfo, err := redis.Values(doRedisCmd(c, "MEMORY", "STATS"))
+		if err != nil {
+			log.Errorf("Redis MEMORY STATS err: %s", err)
+			return err
+		}
+		e.extractMemoryStats(memoryStatsInfo, addr, e.redis.Aliases[idx], scrapes)
 	}
-
-	e.extractMemoryStats(memoryStatsInfo, addr, e.redis.Aliases[idx], scrapes)
 
 	if reply, err := doRedisCmd(c, "LATENCY", "LATEST"); err == nil {
 		var eventName string
@@ -998,20 +998,24 @@ func (e *Exporter) collectMetrics(metrics chan<- prometheus.Metric) {
 }
 
 func (e *Exporter) parseVersion(version string) Version {
-	matched := versionRegex.FindAllString(version, 3)
-	var major, minor, build int
-	var err error
-	if major, err = strconv.Atoi(matched[0]); err != nil {
-		log.Warnf("Major version number is not numeric %s", matched[0])
-		major = 0
+	v := Version{Major: 0, Minor: 0, Build: 0}
+	split := func(c rune) bool {
+		return '.' == c || '-' == c
 	}
-	if minor, err = strconv.Atoi(matched[1]); err != nil {
-		log.Warnf("Minor version number is not numeric %s", matched[1])
-		minor = 0
+	splitted := strings.FieldsFunc(version, split)
+	for i, m := range splitted {
+		if converted, err := strconv.Atoi(m); err != nil {
+			log.Warnf("Version number is not numeric %s", err)
+		} else {
+			switch i {
+			case 0:
+				v.Major = converted
+			case 1:
+				v.Minor = converted
+			case 2:
+				v.Build = converted
+			}
+		}
 	}
-	if build, err = strconv.Atoi(matched[2]); err != nil {
-		log.Warnf("Major version number is not numeric %s", matched[2])
-		build = 0
-	}
-	return Version{Major: major, Minor: minor, Build: build}
+	return v
 }

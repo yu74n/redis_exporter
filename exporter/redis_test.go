@@ -483,6 +483,18 @@ func TestExporterMetrics(t *testing.T) {
 			t.Errorf("missing metrics key: %s", k)
 		}
 	}
+
+	version := e.parseVersion(e.redis.Versions[0])
+	if version.Major >= 4 {
+		wantMemoryKeys := []string{
+			"keys_bytes_per_key",
+		}
+		for _, k := range wantMemoryKeys {
+			if _, ok := e.metrics[k]; !ok {
+				t.Errorf("missing metrics key related to MEMORY STAT: %s", k)
+			}
+		}
+	}
 }
 
 func TestExporterValues(t *testing.T) {
@@ -1358,7 +1370,23 @@ func TestParseVersion(t *testing.T) {
 	e, _ := NewRedisExporter(defaultRedisHost, "test", "", "")
 	v := e.parseVersion("1.2.3")
 	if v.Major != 1 || v.Minor != 2 || v.Build != 3 {
-		t.Errorf("Version parsing failed (%i.%i.%i)\n", v.Major, v.Minor, v.Build)
+		t.Errorf("Version parsing failed (%d.%d.%d)\n", v.Major, v.Minor, v.Build)
+	}
+	v = e.parseVersion("1.2")
+	if v.Major != 1 || v.Minor != 2 || v.Build != 0 {
+		t.Errorf("Version parsing failed (%d.%d.%d)\n", v.Major, v.Minor, v.Build)
+	}
+	v = e.parseVersion("1")
+	if v.Major != 1 || v.Minor != 0 || v.Build != 0 {
+		t.Errorf("Version parsing failed (%d.%d.%d)\n", v.Major, v.Minor, v.Build)
+	}
+	v = e.parseVersion("1.2.3-rc")
+	if v.Major != 1 || v.Minor != 2 || v.Build != 3 {
+		t.Errorf("Version parsing failed (%d.%d.%d)\n", v.Major, v.Minor, v.Build)
+	}
+	v = e.parseVersion("")
+	if v.Major != 0 || v.Minor != 0 || v.Build != 0 {
+		t.Errorf("Version parsing failed (%d.%d.%d)\n", v.Major, v.Minor, v.Build)
 	}
 }
 
